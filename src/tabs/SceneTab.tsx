@@ -34,7 +34,10 @@ export const SceneTab: React.FC = () => {
     pack.loadMesh('sm_dice').then((mesh) => {
       if (!disposed) setDiceGroup(mesh);
     }).catch((err) => {
-      RundotGameAPI.error('[SceneTab] Error loading dice mesh:', err);
+      // Ignore transient errors during HMR teardown
+      if (!disposed) {
+        RundotGameAPI.error('[SceneTab] Error loading dice mesh:', err);
+      }
     });
 
     return () => { disposed = true; };
