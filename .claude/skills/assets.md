@@ -12,7 +12,7 @@ When the user provides a non-UI asset file (3D model, mesh texture, audio), proc
 - **NEVER** use `FBXLoader`, `GLTFLoader`, `OBJLoader`, `DRACOLoader`, `AudioLoader`, or `TextureLoader` from Three.js to load game assets
 - **NEVER** import from `three/examples/jsm/loaders/`
 - **ALWAYS** process 3D models, mesh textures, and audio through StowKit
-- **ALWAYS** load these assets at runtime via `StowKitPack` (from `useStowKitPack` hook or `StowKitLoader`)
+- **ALWAYS** load these assets at runtime via `StowKitPack` (from `loadStowKitPack` or `StowKitLoader`)
 - The only exception is **UI assets** (icons, button images, 2D sprites for the HUD) — those go directly into `public/cdn-assets/` and are loaded via `RundotGameAPI.cdn.fetchAsset()`
 
 ## Recognized Asset Types
@@ -115,12 +115,12 @@ Output goes to `public/cdn-assets/default.stow`.
 
 ### Step 6 — Load in code
 
-Use the `useStowKitPack` React hook:
+Use `loadStowKitPack`:
 
 ```typescript
-import { useStowKitPack } from '../useStowKitPack';
+import { loadStowKitPack } from '../loadStowKitPack';
 
-const pack = useStowKitPack('default');
+const pack = await loadStowKitPack('default');
 
 // Mesh
 const mesh = await pack.loadMesh('robot');
