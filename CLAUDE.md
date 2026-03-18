@@ -115,4 +115,69 @@ This runs on phones. Design for **portrait, touch, one-thumb reach**.
 - Always call `renderer.shadowMap.enabled = true` and set `dirLight.castShadow = true` for shadows to work
 - Near clipping plane (`camera.near`) too small causes z-fighting artifacts — if the camera zooms out far, increase `near` (e.g. `0.5` or `1` instead of `0.1`). Keep the near/far ratio reasonable (< 10000:1).
 
+## Skinned Mesh + Animation
+
+`clone(true)` on a `SkinnedMesh` does **NOT** rebind the skeleton — every clone still points at the original bones, so they all T-pose or move in unison. And calling `loadSkinnedMesh()` per instance is way too expensive (re-decodes geometry + textures from scratch). The correct pattern is **load once, clone with rebind**.
+
+### Step 1 — Load template once (expensive, do it once at startup)
+```ts
+this.enemyTemplate = await pack.loadSkinnedMesh('character/my_character');
+this.enemyWalkClip = await pack.loadAnimationClip('animations/anim_walk');
+// Don't add the template to the scene — it's just a source to clone from
+```
+
+### Step 2 — Clone helper (rebinds skeleton to cloned bones)
+```ts
+function cloneSkinnedMesh(source: THREE.Group): THREE.Group {
+  const clone = source.clone(true);
+
+  const sourceBones: THREE.Bone[] = [];
+  const cloneBones: THREE.Bone[] = [];
+  source.traverse((n) => { if ((n as THREE.Bone).isBone) sourceBones.push(n as THREE.Bone); });
+  clone.traverse((n) =>  { if ((n as THREE.Bone).isBone) cloneBones.push(n as THREE.Bone); });
+
+  clone.traverse((n) => {
+    const sm = n as THREE.SkinnedMesh;
+    if (!sm.isSkinnedMesh) return;
+    const newBones = sm.skeleton.bones.map(
+      (b) => cloneBones[sourceBones.indexOf(b)] ?? b
+    );
+    sm.skeleton = new THREE.Skeleton(newBones, sm.skeleton.boneInverses);
+    sm.bind(sm.skeleton, sm.bindMatrix);
+  });
+
+  return clone;
+}
+```
+
+### Step 3 — Per spawn (cheap — just a CPU-side array remap)
+```ts
+const charGroup = cloneSkinnedMesh(this.enemyTemplate);
+scene.add(charGroup);
+const mixer = new THREE.AnimationMixer(charGroup);
+mixer.clipAction(this.enemyWalkClip).play();
+```
+
+### Step 4 — Every frame
+```ts
+mixer.update(delta);
+```
+
+### Step 5 — On death/removal
+```ts
+mixer.stopAllAction();
+scene.remove(charGroup);
+```
+
+### Quick Reference
+| Method | When to use |
+|--------|-------------|
+| `loadSkinnedMesh(id)` | Once, to get the template mesh |
+| `loadAnimationClip(id)` | Once, to get reusable clip data |
+| `loadAnimation(group, id)` | Convenience — loads + plays in one call. Only use for one-off instances |
+| `cloneSkinnedMesh()` + `new AnimationMixer` | Every subsequent instance — clone template, rebind skeleton, drive independently |
+
+- **NEVER** call `loadSkinnedMesh()` per enemy/instance — it re-decodes the full mesh from the asset pack every time
+- **NEVER** rely on `clone(true)` alone for skinned meshes — you will get T-posing clones that all share one skeleton
+
 [Run.3DEngine Docs Index]|root:.rundot/3d-engine-docs|core:{Component.md,GameObject.md,VenusGame.md}|patterns:{ComponentCommunication.md,CreatingGameObjects.md,MeshColliders.md,MeshLoading.md}|physics:{Colliders.md,PhysicsSystem.md,RigidBodyComponent.md}|rendering:{AssetManager.md,InstancedRenderer.md,MeshRenderer.md,SkeletalRenderer.md}|systems:{AnimationSystem.md,AudioSystem.md,InputManager.md,LightingSystem.md,NavigationSystem.md,ParticleSystem.md,PrefabSystem.md,SplineSystem.md,StowKitSystem.md,TweenSystem.md,UISystem.md}
