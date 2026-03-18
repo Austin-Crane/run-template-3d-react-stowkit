@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
 import RundotGameAPI from '@series-inc/rundot-game-sdk/api';
 import { loadStowKitPack, disposeStowKitPack } from './loadStowKitPack';
 
@@ -12,14 +13,13 @@ export class GameScene {
   private animationFrameId = 0;
   private resizeObserver: ResizeObserver;
   private diceContainer: THREE.Group | null = null;
+  private envMap: THREE.Texture | null = null;
 
   constructor(container: HTMLDivElement) {
     const { clientWidth: w, clientHeight: h } = container;
 
-    // Renderer — alpha: true is cheaper than false on some mobile GPUs (avoids RGB-on-RGBA emulation)
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
-      alpha: true,
       powerPreference: 'high-performance',
       failIfMajorPerformanceCaveat: true,
     });
@@ -30,24 +30,31 @@ export class GameScene {
     this.renderer.domElement.style.width = `${w}px`;
     this.renderer.domElement.style.height = `${h}px`;
 
+    // Tone mapping
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 0.5;
+
     // Shadows
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.appendChild(this.renderer.domElement);
 
-    // Camera — near 0.5 to avoid z-fighting at distance, keep near/far ratio < 10000:1
-    this.camera = new THREE.PerspectiveCamera(50, w / h, 0.5, 50);
+    this.camera = new THREE.PerspectiveCamera(50, w / h, 1, 500);
     this.camera.position.set(3, 2, 3);
 
     this.scene = new THREE.Scene();
 
-    // Ambient fill
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    // Sky + environment map for IBL lighting
+    const sunPosition = new THREE.Vector3(5, 8, 5);
+    this.setupSky(sunPosition);
 
-    // Directional light with shadows — target must be added to scene for shadow camera orientation
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(5, 8, 5);
+    // Ambient fill (reduced — environment map provides indirect light now)
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.15));
+
+    // Directional light — position matches sun so shadows align with sky
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.copy(sunPosition);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.set(1024, 1024);
     dirLight.shadow.camera.near = 0.5;
@@ -56,7 +63,8 @@ export class GameScene {
     dirLight.shadow.camera.right = 5;
     dirLight.shadow.camera.top = 5;
     dirLight.shadow.camera.bottom = -5;
-    dirLight.shadow.bias = -0.001;
+    dirLight.shadow.bias = -0.0005;
+    dirLight.shadow.normalBias = 0.02;
     this.scene.add(dirLight);
     this.scene.add(dirLight.target); // Required — Three.js needs the target in the scene graph
 
@@ -70,10 +78,6 @@ export class GameScene {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Grid for visual reference
-    const grid = new THREE.GridHelper(10, 10, 0x333333, 0x222222);
-    grid.position.y = -0.99; // Slightly above ground to avoid z-fighting
-    this.scene.add(grid);
 
     // Controls
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -85,6 +89,32 @@ export class GameScene {
 
     this.start();
     this.loadAssets();
+  }
+
+  private setupSky(sunPosition: THREE.Vector3) {
+    const sky = new Sky();
+    sky.scale.setScalar(450);
+
+    const uniforms = sky.material.uniforms;
+    uniforms['turbidity']!.value = 2;
+    uniforms['rayleigh']!.value = 1;
+    uniforms['mieCoefficient']!.value = 0.005;
+    uniforms['mieDirectionalG']!.value = 0.8;
+    uniforms['sunPosition']!.value.copy(sunPosition.clone().normalize());
+
+    this.scene.add(sky);
+
+    // Generate PMREM environment map from the sky for IBL (image-based lighting)
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    pmrem.compileCubemapShader();
+    const envScene = new THREE.Scene();
+    envScene.add(sky.clone());
+    // Use fromScene to capture the sky into a cubemap
+    const envRT = pmrem.fromScene(envScene, 0, 0.1, 100);
+    this.envMap = envRT.texture;
+    this.scene.environment = this.envMap;
+    this.scene.background = this.envMap;
+    pmrem.dispose();
   }
 
   private onResize = (entries: ResizeObserverEntry[]) => {
@@ -145,6 +175,7 @@ export class GameScene {
     cancelAnimationFrame(this.animationFrameId);
     this.resizeObserver.disconnect();
     this.controls.dispose();
+    this.envMap?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     disposeStowKitPack('default');
