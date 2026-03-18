@@ -50,11 +50,64 @@ React handles **UI only** (tabs, buttons, cards, overlays). All 3D/game logic li
 - **NEVER** use `stowkit store` commands to find local project files — the store is a remote shared registry
 - To find local assets: glob `assets/`, read `.stowmeta` files, or run `stowkit status`
 - To add an asset: place file in `assets/` → `stowkit build` → use `loadStowKitPack('default')` then `pack.loadMesh()`/`pack.loadTexture()`/etc.
+- **CRITICAL: Always run `stowkit build` after adding or modifying any file in `assets/`.** The `.stow` bundle in `public/cdn-assets/` is what the game actually loads at runtime — if you skip the build, new/changed assets won't exist in the pack and `loadMesh()`/`loadTexture()`/etc. will fail silently or throw. This is the #1 forgotten step.
 - **Sounds/Audio:** When the user asks for sounds, **first** use the MCP asset store search to find existing sounds — there are many available. Only create/synthesize sounds as a last resort if nothing suitable exists in the store.
 
 ## UI Design Guidelines
 
 This runs on phones. Design for **portrait, touch, one-thumb reach**.
+
+### Visual Design — This Is a Game, Not a SaaS Dashboard
+
+Before writing ANY UI code, decide on an aesthetic direction that fits the game (e.g. sci-fi/industrial, fantasy/ornate, casual/toy-like, minimalist/clean, retro/pixel, organic/natural). Commit to it. Every UI element should feel like it belongs in the game world.
+
+**Theme Colors:**
+- Pick ONE dominant accent color that matches the game's mood. Add 1–2 supporting accents max. Do not evenly distribute 5 pastel colors — that's a SaaS palette, not a game.
+- Update `src/theme/default.ts` FIRST — set `primary`, `secondary`, `background`, `surface` to match the game's world. Every UI element pulls from these tokens. A space game gets deep blues and cyan accents. A dungeon crawler gets warm stone and gold. A casual game gets bright, saturated primaries.
+- **NEVER** use the default purple/blue gradient as shipped — it's a placeholder, not a design choice.
+
+**Dark/Translucent Panels (not white cards):**
+- Game UI panels use dark translucent backgrounds: `background: rgba(0, 0, 0, 0.65)` with `backdrop-filter: blur(4px)` — the 3D scene should bleed through.
+- **NEVER** use opaque white or light gray backgrounds for any game UI element. This is a game running over a 3D scene — white cards look completely wrong.
+- Borders are subtle: `1px solid rgba(255, 255, 255, 0.08)`. Not thick, not high-contrast, not colored borders on every panel.
+
+**Border Radius:**
+- Keep it tight: **2–6px**. Games use sharp, intentional corners. `border-radius: 24px` pill shapes are a SaaS/AI-slop tell.
+- Exception: circular elements (avatar badges, round buttons) use `border-radius: 50%` — that's geometric, not decorative.
+
+**Typography:**
+- **NEVER** use Inter, Roboto, Open Sans, Arial, Lato, or default system fonts. These are invisible — they have zero personality and scream "template."
+- Choose a font with character that fits the game: Space Grotesk, Exo 2, Rajdhani, Orbitron (sci-fi), Chakra Petch, Press Start 2P (retro), Fredoka (casual), Cinzel (fantasy). Load via Google Fonts or bundle it.
+- HUD values (score, health, timer): use `font-variant-numeric: tabular-nums` so digits don't shift width, plus `text-shadow: 0 1px 3px rgba(0,0,0,0.8)` for readability over the 3D scene.
+- Labels and button text: `text-transform: uppercase` + `letter-spacing: 0.05–0.1em` reads as game UI, not web UI.
+
+**Buttons:**
+- Game buttons are solid accent color with a subtle lighter border (`2px solid rgba(255,255,255,0.12)`), uppercase text, tight radius.
+- `:active` state is mandatory (`:hover` doesn't exist on phones): `transform: scale(0.95)` for tactile press feel.
+- **NEVER** use gradient fills on buttons as a default. Flat solid color > generic linear-gradient.
+- No `box-shadow: 0 4px 6px rgba(0,0,0,0.1)` — that's a web card shadow. Game buttons either have no shadow or a tight colored glow matching the accent.
+
+**Shadows & Effects:**
+- Avoid generic `box-shadow` on everything. If you need depth, use `border` or subtle inner highlight (`box-shadow: inset 0 1px 0 rgba(255,255,255,0.05)`).
+- Reserve glow effects (`box-shadow: 0 0 12px var(--color-primary)`) for interactive/active states, not decoration.
+
+**Icons:**
+- Use icons over text labels during gameplay — players read icons at a glance, not sentences.
+- Emoji icons are fine for prototyping. For polish, use a consistent icon set (Lucide, Phosphor, or custom SVGs).
+
+**What NOT to Do (AI default behaviors to avoid):**
+- No "three evenly-spaced cards in a row" layouts
+- No hero sections, testimonials, or SaaS page patterns
+- No glassmorphism as a default (heavy `backdrop-filter: blur(20px)` on everything)
+- No scattered generic `fadeIn` animations on every element
+- No pastel/muted color palettes — games need contrast and visual punch
+- No `opacity: 0.5` as the disabled state — use `opacity: 0.35` + `grayscale(0.5)` to actually look disabled
+
+**Motion & Feedback:**
+- One coordinated entrance animation per screen/modal (elements stagger in). Not every element independently fading in.
+- State changes animate meaningfully: health bar drains smoothly, score ticks up, currency flies to the counter.
+- Button presses need instant visual feedback (scale, brightness shift, or flash) — a button that doesn't react to touch feels broken on mobile.
+- Use CSS transitions on `transform`/`opacity` only (compositor-thread). See "Preventing Jitter" below.
 
 ### Layout & Layering
 - The `.app-container` caps at 720×1280 (9:16) — design UI within this, not the full viewport
@@ -87,10 +140,7 @@ This runs on phones. Design for **portrait, touch, one-thumb reach**.
 
 ### Using the Theme System
 - **Always use CSS variables** (`var(--color-primary)`, `var(--spacing-md)`) — never hardcode colors or sizes in component styles
-- For semi-transparent surfaces over the game canvas: `background: rgba(0,0,0,0.6)` + `backdrop-filter: blur(8px)` — looks intentional, not like a broken overlay
-- Use `--color-surface` with alpha for cards on game scenes: `background: color-mix(in srgb, var(--color-surface) 80%, transparent)`
-- Gradients: use `--color-primary` → `--color-secondary` to stay on-brand (already set up in `.btn-primary`)
-- Text on game overlays: use `text-shadow: 0 1px 3px rgba(0,0,0,0.8)` for readability against dynamic 3D backgrounds
+- Update `src/theme/default.ts` to match the game's aesthetic BEFORE building any UI — the defaults are placeholders
 
 ### Game HUD Patterns
 - Score/health/timer: absolutely-positioned HTML elements over the canvas — fast to update, accessible, styled with CSS. **Never** render HUD as 3D text or sprites
