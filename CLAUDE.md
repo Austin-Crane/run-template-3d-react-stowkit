@@ -57,6 +57,61 @@ React handles **UI only** (tabs, buttons, cards, overlays). All 3D/game logic li
 - To add an asset: place file in `assets/` → `stowkit build` → use `loadStowKitPack('default')` then `pack.loadMesh()`/`pack.loadTexture()`/etc.
 - **Sounds/Audio:** When the user asks for sounds, **first** use the MCP asset store search to find existing sounds — there are many available. Only create/synthesize sounds as a last resort if nothing suitable exists in the store.
 
+## UI Design Guidelines
+
+This runs on phones. Design for **portrait, touch, one-thumb reach**.
+
+### Layout & Layering
+- The `.app-container` caps at 720×1280 (9:16) — design UI within this, not the full viewport
+- The canvas (Three.js) composites as its own GPU layer. HTML overlays sit on top naturally — no `z-index` needed if they're siblings of `.scene-container`
+- Game HUD overlays: use `position: absolute` within the game container (not `position: fixed` — there's no scrolling, and fixed creates unnecessary compositor layers). Set `pointer-events: none` on the overlay container, `pointer-events: auto` on interactive children only
+- Use `RundotGameAPI.system.getSafeArea()` to inset UI away from notches/home indicators — apply returned padding to fixed overlays, not just the app shell
+- For fullscreen game scenes (no tabs), hide the `TabBar` and let `.scene-container` fill the app container; overlay HUD elements as absolutely-positioned HTML siblings of the canvas div
+
+### Preventing Jitter Between HTML Overlays and Canvas
+- **Only animate `transform` and `opacity`** on overlay elements — these are the only two CSS properties handled by the compositor thread. Animating `top`, `left`, `width`, `height`, `margin`, `padding`, `box-shadow` etc. forces layout on the main thread and competes with your `requestAnimationFrame` game loop, causing mutual stutter
+- Use `transform: translate(x, y)` instead of `top`/`left` for positioning animations
+- `will-change: transform` promotes an element to its own compositor layer — but it's a **last resort for existing perf problems**, not preventative. Overuse wastes GPU memory. Toggle it via JS before/after animation, don't leave it in stylesheets permanently
+- `will-change` creates a new stacking context eagerly — can break z-ordering unexpectedly
+- Apply `contain: content` (shorthand for `layout paint style`) on overlay panels — tells the browser that DOM changes inside won't affect anything outside, so it can skip recalculating the rest of the page
+- **Don't** re-render React on every game frame — if the game updates a score at 60fps, throttle the React update to every 100–200ms or use a ref + direct DOM mutation for the counter
+
+### Canvas Sizing & DPI
+- **Don't use `renderer.setPixelRatio()`** — Three.js docs recommend against it. It silently multiplies sizes behind the scenes and breaks post-processing, GPU picking, `gl_FragCoord`, and screenshot capture
+- Instead, handle DPI manually: `const dpr = Math.min(window.devicePixelRatio, 2);` then `renderer.setSize(width * dpr, height * dpr, false)` (false = don't touch CSS). Cap at 2 because DPR 3 (modern iPhones) means 9x pixels — destroys mobile fill rate for minimal visual gain
+- Use `ResizeObserver` on the container element, not `window.addEventListener('resize')` — it's element-level (catches tab switches, flexbox reflows), fires between layout and paint, and provides dimensions via `contentRect` without forcing `getBoundingClientRect()` layout thrashing
+- **Don't** put `<canvas>` inside a scrollable container — causes janky resize. The canvas belongs in a fixed-size container
+
+### Touch & Interaction
+- Minimum touch target: **44×44px** — anything smaller is unusable on phone. Pad icons with transparent hit areas if needed
+- Buttons need `:active` state feedback, not just `:hover` (hover doesn't exist on mobile) — use `transform: scale(0.95)` or opacity change on `:active`
+- Set `touch-action: none` on the canvas container — prevents the browser from intercepting touches for pan, zoom, or double-tap-to-zoom. The browser resolves `touch-action` by intersecting values up the DOM tree, so setting it on the container covers all children
+- If your game calls `preventDefault()` on touch events, you **must** use `{ passive: false }` — browsers default `touchstart`/`touchmove` to passive on window/document/body, and passive listeners silently ignore `preventDefault()`. Prefer `touch-action: none` in CSS over `preventDefault()` — it's more efficient (informs the browser before any event fires)
+- For game controls overlaid on the canvas: use transparent `<div>` touch zones positioned over the canvas, **not** Three.js raycasting for UI buttons
+- Use `RundotGameAPI.triggerHapticAsync()` on meaningful interactions (purchases, confirmations) — not on every tap
+
+### Using the Theme System
+- **Always use CSS variables** (`var(--color-primary)`, `var(--spacing-md)`) — never hardcode colors or sizes in component styles
+- For semi-transparent surfaces over the game canvas: `background: rgba(0,0,0,0.6)` + `backdrop-filter: blur(8px)` — looks intentional, not like a broken overlay
+- Use `--color-surface` with alpha for cards on game scenes: `background: color-mix(in srgb, var(--color-surface) 80%, transparent)`
+- Gradients: use `--color-primary` → `--color-secondary` to stay on-brand (already set up in `.btn-primary`)
+- Text on game overlays: use `text-shadow: 0 1px 3px rgba(0,0,0,0.8)` for readability against dynamic 3D backgrounds
+
+### Game HUD Patterns
+- Score/health/timer: absolutely-positioned HTML elements over the canvas — fast to update, accessible, styled with CSS. **Never** render HUD as 3D text or sprites
+- Use the `Card` component for popup modals (game over, settings, shop) — it already has the right border, radius, and backdrop
+- Animate HUD changes with CSS transitions on `transform`/`opacity` only (`--animation-fast` for score ticks, `--animation-normal` for panel slides) — don't use JS `requestAnimationFrame` for UI animation, that's for the game loop
+- Communicate game state → React UI via an event emitter or callback on the game class (e.g. `onScoreChange`, `onGameOver`) — React subscribes in `useEffect`, updates local state. Game class never imports React
+
+### Mobile Renderer Settings
+- **`antialias`**: Native MSAA (`antialias: true`) is the cheapest AA when NOT using post-processing — but 4x MSAA quadruples the color buffer memory. On low-end mobile, skip AA and render at 1.25–1.5x DPR instead (CSS downscale provides implicit AA)
+- **`preserveDrawingBuffer: false`** (default): Lets tiled-rendering mobile GPUs (Adreno, Mali, Apple) discard the framebuffer after compositing instead of writing it back to memory. Only set `true` if you need `canvas.toDataURL()` for screenshots
+- **`alpha: true`**: MDN warns that `alpha: false` can be *more* expensive on some platforms (RGB backbuffer emulated on RGBA). Use `alpha: true` with shaders outputting `alpha: 1.0` if you want an opaque canvas. Set `premultipliedAlpha: false` if your blending assumes straight alpha
+- **`powerPreference: 'high-performance'`**: Worth setting as a hint, but on mobile (single GPU) it has no effect. On laptops Chrome picks GPU based on AC/battery regardless
+- **`failIfMajorPerformanceCaveat: true`**: Causes context creation to fail if the browser would use software rendering — better to show a fallback message than run at 2fps
+- **NEVER** use `logarithmicDepthBuffer` — it uses `gl_FragDepth` which disables Early-Z testing on the GPU, devastating for mobile performance
+- Keep draw calls under ~100–200 for 60fps on mid-range mobile — use `InstancedMesh` or merged geometries to reduce. Check `renderer.info.render.calls` to monitor
+
 ## Three.js Gotchas
 
 - `DirectionalLight` targets: always `scene.add(dirLight.target)` — Three.js needs the target in the scene graph for shadow camera orientation
