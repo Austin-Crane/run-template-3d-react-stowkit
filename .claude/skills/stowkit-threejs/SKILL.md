@@ -2,6 +2,40 @@
 
 Use `@series-inc/stowkit-three-loader` to load `.stow` asset packs in Three.js applications.
 
+## How Assets Get Into the Game
+
+Assets are NEVER loaded as raw files (no `THREE.FBXLoader`, no `THREE.TextureLoader` on PNGs, no `fetch('assets/model.fbx')`). The workflow is:
+
+1. Source files (FBX, GLB, PNG, WAV) go into the project's `srcArtDir`
+2. `stowkit build` compresses and packs them into `.stow` binary files
+3. At runtime, this loader reads from the `.stow` pack using the asset's `stringId`
+
+If you need to add an asset to the game, the pipeline step (`stowkit build`) must happen first. Then use the methods below to load from the pack.
+
+## Quick Reference
+
+| I need to... | Method |
+|---|---|
+| Load a pack | `await StowKitLoader.load('cdn-assets/default.stow')` |
+| Add a static mesh to the scene | `scene.add(await pack.loadMesh('level_geometry'))` |
+| Add a skinned character | `scene.add(await pack.loadSkinnedMesh('hero_model'))` |
+| Play an animation on a character | `const { mixer } = await pack.loadAnimation(character, 'idle')` — call `mixer.update(dt)` each frame |
+| Load a texture | `material.map = await pack.loadTexture('hero_diffuse')` |
+| Play audio | `const audio = await pack.loadAudio('bgm', listener); audio.play()` |
+| See what's in a pack | `pack.listAssets()` — returns array of `{ index, name, id, type, dataSize }` |
+| Clean up | `pack.dispose()` |
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---|---|
+| Using `THREE.FBXLoader` / `THREE.TextureLoader` / `THREE.GLTFLoader` to load raw source files | StowKit projects load everything from `.stow` packs — use `pack.loadMesh()`, `pack.loadTexture()`, etc. |
+| Forgetting `mixer.update(dt)` in render loop | Animations won't play without it — add `mixer.update(clock.getDelta())` to your animate function |
+| Loading audio before adding `AudioListener` to camera | Create listener, attach to camera, then load audio |
+| Calling `loadAnimation` with wrong group | Pass the group returned by `loadSkinnedMesh`, not a child mesh |
+| Not awaiting `StowKitLoader.load()` | All load methods are async — always `await` them |
+| Manually decoding KTX2/Draco | The loader handles all decoding internally — just call `loadMesh`/`loadTexture` |
+
 ## Installation
 
 ```bash
@@ -216,7 +250,12 @@ animate();
 
 ## Troubleshooting
 
-- **Animations offset from origin** — Ensure `.stow` was packed with latest stowkit (correct bone parent indices)
-- **Textures not loading** — Check that `public/stowkit/basis/` has `basis_transcoder.js` and `.wasm`
-- **Audio not playing** — Create `AudioListener` and add to camera before loading audio
-- **Mesh materials missing** — Assign `.stowmat` files via `materialOverrides` in the mesh's `.stowmeta`
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Animations offset from origin | Old pack format with wrong bone parent indices | Rebuild with latest `stowkit build` |
+| Textures not loading / white meshes | Basis transcoder files missing | Verify `public/stowkit/basis/` has `basis_transcoder.js` and `.wasm`. Re-run `npm install` to trigger postinstall copy. |
+| Audio not playing | No `AudioListener` on camera | Create `new THREE.AudioListener()`, add to camera before loading audio |
+| Mesh has no materials / gray | No `materialOverrides` in `.stowmeta` | Assign `.stowmat` files via `materialOverrides` in the mesh's `.stowmeta`, then `stowkit build` |
+| WASM file not found | Wrong `wasmPath` or files not copied | Check `public/stowkit/stowkit_reader.wasm` exists. Pass custom `wasmPath` if serving from a different location. |
+| `loadAnimation` throws "no skeleton" | Passed a static mesh group, not a skinned mesh | Use the group returned by `loadSkinnedMesh`, not `loadMesh` |
+| Second load of same texture looks different | Texture cache returns same instance | This is intentional — textures are cached per pack. Clone if you need different settings. |
