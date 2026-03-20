@@ -53,6 +53,25 @@ React handles **UI only** (tabs, buttons, cards, overlays). All 3D/game logic li
 - **CRITICAL: Always run `stowkit build` after adding or modifying any file in `assets/`.** The `.stow` bundle in `public/cdn-assets/` is what the game actually loads at runtime — if you skip the build, new/changed assets won't exist in the pack and `loadMesh()`/`loadTexture()`/etc. will fail silently or throw. This is the #1 forgotten step.
 - **Sounds/Audio:** When the user asks for sounds, **first** use the MCP asset store search to find existing sounds — there are many available. Only create/synthesize sounds as a last resort if nothing suitable exists in the store.
 
+## Art Approach — Ask Before Building
+
+When the user describes a new game or a new visual element (characters, environments, props, etc.), **do NOT default to primitives** (cubes, spheres, planes with colored materials). Instead, **ask the user which approach they want**:
+
+1. **Prototype with primitives** — Use basic Three.js geometries (BoxGeometry, SphereGeometry, etc.) as stand-ins to block out gameplay fast. Good for testing mechanics before investing in art.
+2. **Use real assets** — Search for suitable 3D models, textures, and audio to make it look and sound like a real game from the start.
+
+**Always ask. Never assume primitives.** The user may already have assets in mind or want to find some.
+
+### If the user chooses real assets:
+
+- **Search first.** Use the MCP asset store search to find existing models, textures, and sounds before creating anything from scratch. There are many assets available — check before defaulting to programmer art.
+- Download/save found assets to `assets/`, then follow the StowKit pipeline (`npx stowkit scan` → configure `.stowmeta` → `npx stowkit build`).
+- If nothing suitable exists in the store, tell the user and fall back to prototyping or ask if they want to provide their own files.
+
+### If the user chooses prototyping:
+
+- Use primitives freely, but remind them that when they're ready for real art, assets go through StowKit (never raw Three.js loaders).
+
 ## UI Design Guidelines
 
 This runs on phones. Design for **portrait, touch, one-thumb reach**.
